@@ -70,7 +70,16 @@ brew install gh-guard
 
 ## Configuration
 
-`gh-guard` reads `~/.config/gh-guard/config.toml`:
+`gh-guard` reads `~/.config/gh-guard/config.toml`.
+
+An example config is shipped at `config/example.toml`:
+
+```bash
+mkdir -p ~/.config/gh-guard
+cp config/example.toml ~/.config/gh-guard/config.toml
+```
+
+Minimal example:
 
 ```toml
 [default]

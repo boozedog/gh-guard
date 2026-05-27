@@ -1,0 +1,91 @@
+# gh-guard example configuration
+#
+# Copy to:
+#   ~/.config/gh-guard/config.toml
+#
+# gh-guard uses a conservative whitelist-first policy. Commands that do not
+# match an explicit allow rule are gated by a fresh sudo authorization check.
+
+[default]
+action = "gate"
+
+[updates]
+auto_update = true
+check_interval = "24h"
+pinned_version = ""
+
+[logging]
+level = "info"
+redact = true
+otel_endpoint = ""
+
+[real_gh]
+download_source = "github"
+release_repo = "cli/cli"
+
+[gate]
+method = "sudo"
+fresh = true
+
+# Conservative built-in-style allows.
+# These commands do not expose repository data or tokens.
+
+[[rules]]
+match = ["--version"]
+action = "allow"
+
+[[rules]]
+match = ["--help"]
+action = "allow"
+
+[[rules]]
+match = ["help"]
+action = "allow"
+
+[[rules]]
+match = ["completion"]
+action = "allow"
+
+# Optional local policy examples.
+# Uncomment rules below if they fit your threat model.
+
+# Allow all issue workflows without sudo, including create/edit/comment/close/reopen.
+# This can mutate GitHub issues, but generally has a small blast radius.
+# If enabling this broad rule, keep the more specific delete deny below it.
+# [[rules]]
+# match = ["issue"]
+# action = "allow"
+
+# Never allow issue deletion without an explicit config change.
+# Specific rules win over broader rules, so this beats match = ["issue"].
+# [[rules]]
+# match = ["issue", "delete"]
+# action = "deny"
+
+# Allow common pull request reading/local checkout workflows.
+# These may expose private PR metadata/content.
+# [[rules]]
+# match = ["pr", "list"]
+# action = "allow"
+
+# [[rules]]
+# match = ["pr", "view"]
+# action = "allow"
+
+# [[rules]]
+# match = ["pr", "checkout"]
+# action = "allow"
+
+# Allow creating, editing, and commenting on PRs without sudo.
+# These mutate GitHub state, but do not merge or delete anything.
+# [[rules]]
+# match = ["pr", "create"]
+# action = "allow"
+
+# [[rules]]
+# match = ["pr", "edit"]
+# action = "allow"
+
+# [[rules]]
+# match = ["pr", "comment"]
+# action = "allow"
