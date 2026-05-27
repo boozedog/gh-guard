@@ -131,12 +131,13 @@ pub fn update(config: &Config) -> anyhow::Result<()> {
     lock_file.lock_exclusive()?;
 
     let state = State::load()?;
-    let target_version = if config.updates.pinned_version.is_empty() {
-        let release = get_latest_release(&config.real_gh.release_repo)?;
-        release.tag_name
+
+    let release = if config.updates.pinned_version.is_empty() {
+        get_latest_release(&config.real_gh.release_repo)?
     } else {
-        config.updates.pinned_version.clone()
+        get_release_by_tag(&config.real_gh.release_repo, &config.updates.pinned_version)?
     };
+    let target_version = release.tag_name.clone();
 
     if Some(target_version.clone()) == state.current_version {
         let mut state = state;
@@ -144,12 +145,6 @@ pub fn update(config: &Config) -> anyhow::Result<()> {
         state.save()?;
         return Ok(());
     }
-
-    let release = if config.updates.pinned_version.is_empty() {
-        get_latest_release(&config.real_gh.release_repo)?
-    } else {
-        get_release_by_tag(&config.real_gh.release_repo, &target_version)?
-    };
 
     let asset = select_asset(&release.assets)?;
     let cache_path = paths::cache_dir().join("downloads").join(&asset.name);

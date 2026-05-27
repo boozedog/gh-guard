@@ -13,7 +13,15 @@ pub fn extract_command_path(args: &[String]) -> Option<Vec<String>> {
         }
 
         if arg.starts_with('-') {
-            // Known value-taking global flags
+            // Inline --flag=value forms: skip the whole token.
+            if arg.starts_with("--repo=")
+                || arg.starts_with("--hostname=")
+                || arg.starts_with("--config-dir=")
+            {
+                i += 1;
+                continue;
+            }
+            // Separate-token value-taking global flags.
             if arg == "--repo" || arg == "--hostname" || arg == "--config-dir" {
                 i += 1;
                 if i < args.len() {
@@ -124,5 +132,44 @@ mod tests {
     fn test_flags_only() {
         let args = vec!["--repo".to_string(), "foo".to_string()];
         assert_eq!(extract_command_path(&args), None);
+    }
+
+    #[test]
+    fn test_inline_repo_flag() {
+        let args = vec![
+            "--repo=owner/repo".to_string(),
+            "pr".to_string(),
+            "list".to_string(),
+        ];
+        assert_eq!(
+            extract_command_path(&args),
+            Some(vec!["pr".to_string(), "list".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_inline_hostname_flag() {
+        let args = vec![
+            "--hostname=ghe.example.com".to_string(),
+            "auth".to_string(),
+            "status".to_string(),
+        ];
+        assert_eq!(
+            extract_command_path(&args),
+            Some(vec!["auth".to_string(), "status".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_inline_config_dir_flag() {
+        let args = vec![
+            "--config-dir=/tmp/gh".to_string(),
+            "api".to_string(),
+            "user".to_string(),
+        ];
+        assert_eq!(
+            extract_command_path(&args),
+            Some(vec!["api".to_string(), "user".to_string()])
+        );
     }
 }

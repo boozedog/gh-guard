@@ -5,8 +5,17 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{copy, Read};
 use std::path::Path;
+use std::time::Duration;
 
 const GITHUB_API: &str = "https://api.github.com";
+
+fn client() -> anyhow::Result<Client> {
+    Client::builder()
+        .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .context("building HTTP client")
+}
 
 #[derive(Debug, Deserialize)]
 pub struct Release {
@@ -21,7 +30,7 @@ pub struct Asset {
 }
 
 pub fn get_latest_release(repo: &str) -> anyhow::Result<Release> {
-    let client = Client::new();
+    let client = client()?;
     let url = format!("{}/repos/{}/releases/latest", GITHUB_API, repo);
     let resp = client
         .get(&url)
@@ -39,7 +48,7 @@ pub fn get_latest_release(repo: &str) -> anyhow::Result<Release> {
 }
 
 pub fn get_release_by_tag(repo: &str, tag: &str) -> anyhow::Result<Release> {
-    let client = Client::new();
+    let client = client()?;
     let url = format!("{}/repos/{}/releases/tags/{}", GITHUB_API, repo, tag);
     let resp = client
         .get(&url)
@@ -88,7 +97,7 @@ fn platform_id() -> (&'static str, &'static str) {
 }
 
 pub fn download_asset(url: &str, dest: &Path) -> anyhow::Result<()> {
-    let client = Client::new();
+    let client = client()?;
     let mut resp = client
         .get(url)
         .header("User-Agent", "gh-guard")
@@ -124,6 +133,7 @@ pub fn verify_sha256(file_path: &Path, expected: &str) -> anyhow::Result<()> {
 }
 
 pub fn extract_archive(archive: &Path, dest: &Path) -> anyhow::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(dest)?;
     let name = archive.to_string_lossy();
     if name.ends_with(".zip") {
         extract_zip(archive, dest)
@@ -135,6 +145,7 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> anyhow::Result<std::path:
 }
 
 fn extract_zip(archive: &Path, dest: &Path) -> anyhow::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(dest)?;
     let file = File::open(archive)?;
     let mut archive = zip::ZipArchive::new(file)?;
 
@@ -158,6 +169,7 @@ fn extract_zip(archive: &Path, dest: &Path) -> anyhow::Result<std::path::PathBuf
 }
 
 fn extract_tar_gz(archive: &Path, dest: &Path) -> anyhow::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(dest)?;
     let file = File::open(archive)?;
     let dec = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(dec);
@@ -223,4 +235,160 @@ pub fn extract_checksum(checksums_path: &Path, asset_name: &str) -> anyhow::Resu
         }
     }
     anyhow::bail!("checksum for {} not found in checksums file", asset_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn make_tar_gz(dir: &Path, entries: &[(&str, &[u8])]) -> std::path::PathBuf {
+        let archive_path = dir.join("test.tar.gz");
+        let file = File::create(&archive_path).unwrap();
+        let enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        let mut builder = tar::Builder::new(enc);
+        for (name, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder.append_data(&mut header, *name, &data[..]).unwrap();
+        }
+        builder.into_inner().unwrap().finish().unwrap();
+        archive_path
+    }
+
+    fn make_zip(dir: &Path, entries: &[(&str, &[u8])]) -> std::path::PathBuf {
+        let archive_path = dir.join("test.zip");
+        let file = File::create(&archive_path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, data) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(data).unwrap();
+        }
+        writer.finish().unwrap();
+        archive_path
+    }
+
+    #[test]
+    fn test_sanitize_archive_path_rejects_traversal() {
+        let result = sanitize_archive_path("../etc/passwd");
+        assert!(result.is_err(), ".. should be rejected");
+
+        let result = sanitize_archive_path("/absolute/path");
+        assert!(result.is_err(), "absolute path should be rejected");
+
+        let result = sanitize_archive_path("foo/../bar");
+        assert!(result.is_err(), "embedded .. should be rejected");
+
+        let result = sanitize_archive_path("gh_2.0.0_linux_amd64/bin/gh").unwrap();
+        assert_eq!(result, std::path::Path::new("gh_2.0.0_linux_amd64/bin/gh"));
+    }
+
+    #[test]
+    fn test_zip_rejects_path_traversal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = make_zip(
+            tmp.path(),
+            &[
+                ("../etc/passwd", b"root"),
+                ("gh_2.0.0_linux_amd64/bin/gh", b"fake binary"),
+            ],
+        );
+        let dest = tmp.path().join("extracted");
+        let result = extract_zip(&archive, &dest);
+        assert!(
+            result.is_ok(),
+            "extraction should succeed despite bad entry"
+        );
+        assert!(
+            !dest.join("../etc/passwd").exists(),
+            "traversal entry should not be extracted"
+        );
+        assert!(
+            !dest.join("etc/passwd").exists(),
+            "traversal entry should be fully rejected"
+        );
+        assert!(dest.join("gh_2.0.0_linux_amd64/bin/gh").exists());
+    }
+
+    #[test]
+    fn test_tar_only_extracts_gh_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = make_tar_gz(
+            tmp.path(),
+            &[
+                ("gh_2.0.0_linux_amd64/bin/gh", b"fake binary"),
+                ("gh_2.0.0_linux_amd64/share/man/gh.1", b"man page"),
+                ("gh_2.0.0_linux_amd64/LICENSE", b"MIT"),
+            ],
+        );
+        let dest = tmp.path().join("extracted");
+        extract_tar_gz(&archive, &dest).unwrap();
+        assert!(dest.join("gh_2.0.0_linux_amd64/bin/gh").exists());
+        assert!(
+            !dest.join("gh_2.0.0_linux_amd64/share/man/gh.1").exists(),
+            "man page should not be extracted"
+        );
+        assert!(
+            !dest.join("gh_2.0.0_linux_amd64/LICENSE").exists(),
+            "license should not be extracted"
+        );
+    }
+
+    #[test]
+    fn test_zip_only_extracts_gh_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = make_zip(
+            tmp.path(),
+            &[
+                ("gh_2.0.0_linux_amd64/bin/gh", b"fake binary"),
+                ("gh_2.0.0_linux_amd64/share/man/gh.1", b"man page"),
+                ("gh_2.0.0_linux_amd64/LICENSE", b"MIT"),
+            ],
+        );
+        let dest = tmp.path().join("extracted");
+        extract_zip(&archive, &dest).unwrap();
+        assert!(dest.join("gh_2.0.0_linux_amd64/bin/gh").exists());
+        assert!(
+            !dest.join("gh_2.0.0_linux_amd64/share/man/gh.1").exists(),
+            "man page should not be extracted"
+        );
+        assert!(
+            !dest.join("gh_2.0.0_linux_amd64/LICENSE").exists(),
+            "license should not be extracted"
+        );
+    }
+
+    #[test]
+    fn test_tar_missing_gh_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = make_tar_gz(tmp.path(), &[("some/other/file", b"data")]);
+        let dest = tmp.path().join("extracted");
+        let result = extract_tar_gz(&archive, &dest);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("not found"),
+            "error should mention gh not found: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_zip_missing_gh_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = make_zip(tmp.path(), &[("some/other/file", b"data")]);
+        let dest = tmp.path().join("extracted");
+        let result = extract_zip(&archive, &dest);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("not found"),
+            "error should mention gh not found: {}",
+            msg
+        );
+    }
 }
