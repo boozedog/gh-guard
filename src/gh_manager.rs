@@ -139,7 +139,7 @@ pub fn update(config: &Config) -> anyhow::Result<()> {
     };
     let target_version = release.tag_name.clone();
 
-    if Some(target_version.clone()) == state.current_version {
+    if Some(target_version.clone()) == state.current_version && active_real_gh_exists() {
         let mut state = state;
         state.last_update_check = Some(time::OffsetDateTime::now_utc());
         state.save()?;
@@ -250,6 +250,14 @@ pub fn update(config: &Config) -> anyhow::Result<()> {
     state.save()?;
 
     Ok(())
+}
+
+fn active_real_gh_exists() -> bool {
+    let symlink = paths::real_gh_symlink();
+    match fs::read_link(&symlink) {
+        Ok(target) => target.exists(),
+        Err(_) => false,
+    }
 }
 
 fn install(config: &Config) -> anyhow::Result<()> {
