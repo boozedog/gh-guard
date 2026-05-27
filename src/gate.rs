@@ -8,6 +8,12 @@ pub fn check_not_root() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Gate challenge: sudo -k → sudo -v → sudo -k
+///
+/// The sequence ensures:
+/// 1. Any previously cached sudo credentials are invalidated.
+/// 2. User must authenticate fresh.
+/// 3. Credentials are immediately invalidated again so they don't linger.
 pub fn challenge() -> anyhow::Result<()> {
     check_not_root()?;
 
@@ -27,8 +33,19 @@ pub fn challenge() -> anyhow::Result<()> {
         anyhow::bail!(crate::error::GuardError::GateDenied);
     }
 
-    // Immediately invalidate cached credentials so they don't linger
+    // Immediately invalidate cached credentials so they don't linger.
     let _ = Command::new("sudo").arg("-k").status();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_check_not_root_passes_when_not_root() {
+        // Tests should never run as root.
+        check_not_root().expect("check_not_root should pass when UID != 0");
+    }
 }

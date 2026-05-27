@@ -167,4 +167,26 @@ mod tests {
         let (action, _) = decide(&config, &["api".to_string()]);
         assert_eq!(action, Action::Deny);
     }
+
+    #[test]
+    fn test_default_config_gates_auth_status() {
+        let config = crate::config::default_config();
+        let (action, _) = decide(&config, &["auth".to_string(), "status".to_string()]);
+        assert_eq!(
+            action,
+            Action::Gate,
+            "auth status should be gated by default"
+        );
+    }
+
+    #[test]
+    fn test_default_config_allows_version() {
+        let config = crate::config::default_config();
+        let (action, _) = decide(&config, &["--version".to_string()]);
+        assert_eq!(
+            action,
+            Action::Allow,
+            "--version should be allowed by default"
+        );
+    }
 }

@@ -1,18 +1,4 @@
-mod command;
-mod config;
-mod download;
-mod error;
-mod exec;
-mod gate;
-mod gh_manager;
-mod guard_commands;
-mod logging;
-mod metadata;
-mod paths;
-mod policy;
-mod redact;
-mod state;
-
+use gh_guard::{command, config, exec, gate, gh_manager, guard_commands, logging, policy, redact};
 use std::env;
 
 fn main() {
@@ -25,7 +11,7 @@ fn main() {
 fn run() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
 
-    paths::ensure_dirs()?;
+    gh_guard::paths::ensure_dirs()?;
     logging::init_global_logger()?;
 
     let config = config::load_or_create()?;
@@ -33,7 +19,7 @@ fn run() -> anyhow::Result<()> {
         "config_loaded",
         std::collections::HashMap::from([(
             "config_path".to_string(),
-            serde_json::Value::String(paths::config_path().to_string_lossy().into()),
+            serde_json::Value::String(gh_guard::paths::config_path().to_string_lossy().into()),
         )]),
     )?;
 
@@ -141,7 +127,7 @@ fn run() -> anyhow::Result<()> {
         }
         policy::Action::Deny => {
             logging::global_log("deny", std::collections::HashMap::new())?;
-            anyhow::bail!(error::GuardError::Denied);
+            anyhow::bail!(gh_guard::error::GuardError::Denied);
         }
     }
 
